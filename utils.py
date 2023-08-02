@@ -5,6 +5,7 @@ from transformers import (AutoTokenizer, AutoModel,
                           BertForSequenceClassification,
                           ElectraForSequenceClassification)
 from transformers.optimization import get_cosine_schedule_with_warmup
+import json
 from operator import itemgetter
 
 
@@ -32,6 +33,10 @@ def get_model_and_tokenizer(model_path, num_labels):
     return model, tokenizer
 
 
+def get_tokenizer_pad_id(tokenizer):
+    return tokenizer.convert_tokens_to_ids(['[PAD]'])
+
+
 def get_optimizer_and_scheduler(model, lr, warmup_steps, t_total):
     no_decay = ['bias', 'LayerNorm.weight']
     optimizer_grouped_parameters = [
@@ -45,18 +50,67 @@ def get_optimizer_and_scheduler(model, lr, warmup_steps, t_total):
     return optimizer, scheduler
 
 
-def get_train_valid_test_indices(data_length):
-    test_indices  = [0 + i*10 for i in range(data_length//10)]
-    valid_indices = [1 + i*10 for i in range(data_length//10)]
-    train_indices = list(set(range(data_length)) - set(valid_indices) - set(test_indices))
-    return train_indices, valid_indices, test_indices
+def load_json_data(json_path):
+    with open(json_path, 'r', encoding='UTF8') as f:
+        data = json.load(f)
+    return data
 
 
-def get_train_valid_test_data(data, train_indices, valid_indices, test_indices):
-    train_data = list(itemgetter(*train_indices)(data))
-    valid_data = list(itemgetter(*valid_indices)(data))
-    test_data  = list(itemgetter(*test_indices)(data)) 
-    return train_data, valid_data, test_data
+def slice_2d_tensors(tensors, tokens_per_word,
+                     token_pad_emb, word_pad_emb,
+                     max_tokens_per_word, max_words_per_sent):
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    # tensors: [max_length, hidden_size], [150, 768]
+    # tokens_per_word: [max_words_per_sent], [75]
+    start_row = 0
+    sliced_lst = []
+
+    for tokens in tokens_per_word:
+        if int(tokens) == 0: break
+        end_row = start_row + int(tokens)
+        sliced = tensors[start_row:end_row, :]
+
+        # Pad & Truncate in token level
+        while sliced.size(0) < max_tokens_per_word:
+            sliced = sliced.to(device)
+            token_pad_emb = token_pad_emb.to(device)
+            sliced = torch.cat((sliced, token_pad_emb), dim=0)
+        if sliced.size(0) > max_tokens_per_word:
+            sliced = sliced[:max_tokens_per_word]
+
+        start_row = end_row
+        sliced_lst.append(sliced)
+    sliced_lst = torch.stack(sliced_lst)
+    
+    # Pad & Truncate in word level
+    while sliced_lst.size(0) < max_words_per_sent:
+        sliced_lst = sliced_lst.to(device)
+        word_pad_emb = word_pad_emb.to(device)
+        sliced_lst = torch.cat((sliced_lst, word_pad_emb), dim=0) 
+    if sliced_lst.size(0) > max_words_per_sent:
+        sliced_lst = sliced_lst[:max_words_per_sent]
+    return sliced_lst
+    # sliced_lst: [max_words_per_sent, max_tokens_per_word, hidden_size], [75, 10, 768]
+
+
+def slice_3d_tensors(tensors, tokens_per_word,
+                     token_pad_emb, word_pad_emb,
+                     max_tokens_per_word, max_words_per_sent):
+    # tensors: [batch_size, max_length, hidden_size], [256, 150, 768]
+    # tokens_per_word: [batch_size, max_words_per_sent], [256, 75]
+    batch_size = tensors.size(0)
+    all_sliced_lst = []
+
+    for i in range(batch_size):
+        tensors_ = tensors[i]
+        tokens_per_word_ = tokens_per_word[i]
+
+        sliced_lst = slice_2d_tensors(tensors_, tokens_per_word_,
+                                      token_pad_emb, word_pad_emb,
+                                      max_tokens_per_word, max_words_per_sent)
+        all_sliced_lst.append(sliced_lst)
+    return torch.stack(all_sliced_lst)
+    # all_sliced_lst: [batch_size, max_words_per_sent, max_tokens_per_word, hidden_size], [256, 75, 10, 768]
 
 
 def calculate_accuracy(x, y):
