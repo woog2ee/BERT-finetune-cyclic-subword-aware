@@ -49,7 +49,7 @@ class CustomClassifier(nn.Module):
             # last_hidden_state: [batch_size, max_words_per_sent, hidden_size]
 
         out = self.dropout(out)
-        return self.classifier(out)
+        return torch.sigmoid(self.classifier(out))
         # classified: [batch_size, max_length, num_labels]
         # classified: [batch_size, max_words_per_sent, num_labels]
 
@@ -70,7 +70,7 @@ class SubwordAwareEmbedder(nn.Module):
 
         self.model = nn.LSTM(input_size=hidden_size,
                              hidden_size=hidden_size,
-                             num_layers=3,
+                             num_layers=2,
                              bias=True,
                              batch_first=True,
                              dropout=dropout,

@@ -19,7 +19,7 @@ def str2bool(str):
         raise 'Invalid arguments, boolean value expected.'
     
 
-def get_model_and_tokenizer(model_path, num_labels):
+def get_model_and_tokenizer(model_path):
     if 'bert' in model_path.lower():
         model = BertForSequenceClassification.from_pretrained(model_path, num_labels=num_labels)
     elif 'electra' in model_path.lower():
@@ -114,12 +114,14 @@ def slice_3d_tensors(tensors, tokens_per_word,
 
 
 def calculate_accuracy(x, y):
-    assert x.shape == y.shape
-    assert x.dim() == y.dim() == 2
+    # assert x.shape == y.shape
+    # assert x.dim() == y.dim() == 2
 
-    issame = (x == y).tolist()
-    issame = sum(issame, [])
-    return issame.count(True) / len(issame)
+    # issame = (x == y).tolist()
+    # issame = sum(issame, [])
+    # return issame.count(True) / len(issame)
+    acc = list(x == y).count(True) / len(y)
+    return acc
 
 
 def compact_name(model_path):
